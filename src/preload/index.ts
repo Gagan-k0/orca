@@ -4181,6 +4181,25 @@ const api = {
     getSnapshot: (): Promise<MemorySnapshot> => ipcRenderer.invoke('memory:getSnapshot')
   },
 
+  baton: {
+    start: (args: { projectRoot: string }): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('baton:start', args),
+    stop: (): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('baton:stop'),
+    status: (): Promise<{
+      status: string
+      port: number | null
+      pid: number | null
+      error: string | null
+      progress: string
+    }> => ipcRenderer.invoke('baton:status'),
+    onStatusChange: (callback: (state: unknown) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data)
+      ipcRenderer.on('baton:onStatusChange', listener)
+      return () => { ipcRenderer.removeListener('baton:onStatusChange', listener) }
+    }
+  },
+
   claudeUsage: {
     getScanState: (): Promise<unknown> => ipcRenderer.invoke('claudeUsage:getScanState'),
     setEnabled: (args: { enabled: boolean }): Promise<unknown> =>

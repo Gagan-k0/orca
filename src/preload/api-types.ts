@@ -2766,6 +2766,24 @@ export type PreloadApi = {
   }
   stats: StatsApi
   memory: MemoryApi
+  baton: {
+    start: (args: { projectRoot: string }) => Promise<{ ok: boolean; error?: string }>
+    stop: () => Promise<{ ok: boolean }>
+    status: () => Promise<{
+      status: 'stopped' | 'bootstrapping' | 'initializing-kb' | 'installing-skills' | 'starting' | 'running' | 'error'
+      port: number | null
+      pid: number | null
+      error: string | null
+      progress: string
+    }>
+    onStatusChange: (callback: (state: {
+      status: 'stopped' | 'bootstrapping' | 'initializing-kb' | 'installing-skills' | 'starting' | 'running' | 'error'
+      port: number | null
+      pid: number | null
+      error: string | null
+      progress: string
+    }) => void) => () => void
+  }
   claudeUsage: ClaudeUsageApi
   codexUsage: CodexUsageApi
   openCodeUsage: OpenCodeUsageApi

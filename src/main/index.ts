@@ -46,6 +46,7 @@ import {
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { disposeWorktreeBaseDirectoryWatchers } from './ipc/worktree-base-directory-watcher'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
+import { killDaemonIfRunning } from './baton/baton-manager'
 import { initObservability, shutdownObservability } from './observability'
 import { registerMobileHandlers } from './ipc/mobile'
 import { initTelemetry, shutdownTelemetry, trackAppOpenedOnce, track } from './telemetry/client'
@@ -3128,6 +3129,8 @@ app.on('will-quit', (e) => {
   // active SSH lease detached in memory synchronously, and that flush is what persists it.
   const sshShutdown = beginSshShutdown()
   killAllPty()
+  // Why: baton daemon is a spawned child that would otherwise outlive the app and keep port 7077 held.
+  killDaemonIfRunning()
   const watcherShutdown = shutdownWatchersOnce()
   const storeFlush = store?.flushAsync() ?? Promise.resolve()
   // Why: usage-cache writes are queued off the main thread, so a quit right after setEnabled or a
