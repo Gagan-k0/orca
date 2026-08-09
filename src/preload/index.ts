@@ -4200,6 +4200,27 @@ const api = {
     }
   },
 
+  omniroute: {
+    start: (): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('omniroute:start'),
+    stop: (): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('omniroute:stop'),
+    setup: (values: { initialPassword: string }): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('omniroute:setup', values),
+    status: (): Promise<{
+      status: string
+      port: number | null
+      pid: number | null
+      error: string | null
+      progress: string
+    }> => ipcRenderer.invoke('omniroute:status'),
+    onStatusChange: (callback: (state: unknown) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data)
+      ipcRenderer.on('omniroute:onStatusChange', listener)
+      return () => { ipcRenderer.removeListener('omniroute:onStatusChange', listener) }
+    }
+  },
+
   claudeUsage: {
     getScanState: (): Promise<unknown> => ipcRenderer.invoke('claudeUsage:getScanState'),
     setEnabled: (args: { enabled: boolean }): Promise<unknown> =>

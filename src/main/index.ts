@@ -47,6 +47,7 @@ import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { disposeWorktreeBaseDirectoryWatchers } from './ipc/worktree-base-directory-watcher'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
 import { killDaemonIfRunning } from './baton/baton-manager'
+import { startOmniRoute, killServerIfRunning as killOmniRouteIfRunning } from './omniroute/omniroute-manager'
 import { initObservability, shutdownObservability } from './observability'
 import { registerMobileHandlers } from './ipc/mobile'
 import { initTelemetry, shutdownTelemetry, trackAppOpenedOnce, track } from './telemetry/client'
@@ -2127,6 +2128,9 @@ void app.whenReady().then(async () => {
 
   const activeOrcaProfile = ensureActiveOrcaProfile()
   store = new Store({ dataFile: activeOrcaProfile.dataFile })
+  // Why: OmniRoute auto-starts with the IDE — no user action needed. Fire-and-forget
+  // so a slow first-run bootstrap never blocks app startup; failures fold into state.
+  void startOmniRoute()
   wslHookRelayManager.setManagedHookSettingsResolver(() => store?.getSettings() ?? null)
   logStartupMilestone('store-loaded')
   // Why: apply initial fallback WSL distro from store settings for global git/CLI calls.
@@ -3131,6 +3135,8 @@ app.on('will-quit', (e) => {
   killAllPty()
   // Why: baton daemon is a spawned child that would otherwise outlive the app and keep port 7077 held.
   killDaemonIfRunning()
+  // Why: OmniRoute server is a spawned child that would otherwise outlive the app and keep port 20128 held.
+  killOmniRouteIfRunning()
   const watcherShutdown = shutdownWatchersOnce()
   const storeFlush = store?.flushAsync() ?? Promise.resolve()
   // Why: usage-cache writes are queued off the main thread, so a quit right after setEnabled or a

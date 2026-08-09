@@ -2784,6 +2784,25 @@ export type PreloadApi = {
       progress: string
     }) => void) => () => void
   }
+  omniroute: {
+    start: () => Promise<{ ok: boolean; error?: string }>
+    stop: () => Promise<{ ok: boolean }>
+    setup: (values: { initialPassword: string }) => Promise<{ ok: boolean; error?: string }>
+    status: () => Promise<{
+      status: 'idle' | 'setup' | 'bootstrapping' | 'starting' | 'running' | 'error'
+      port: number | null
+      pid: number | null
+      error: string | null
+      progress: string
+    }>
+    onStatusChange: (callback: (state: {
+      status: 'idle' | 'setup' | 'bootstrapping' | 'starting' | 'running' | 'error'
+      port: number | null
+      pid: number | null
+      error: string | null
+      progress: string
+    }) => void) => () => void
+  }
   claudeUsage: ClaudeUsageApi
   codexUsage: CodexUsageApi
   openCodeUsage: OpenCodeUsageApi

@@ -12,6 +12,7 @@ const FolderWorkspaceWorktreesPanel = lazy(() => import('./FolderWorkspaceWorktr
 const FolderWorkspacePrChecksPanel = lazy(() => import('./FolderWorkspacePrChecksPanel'))
 const PluginPanel = lazy(() => import('./PluginPanel'))
 const BatonPanel = lazy(() => import('./BatonPanel'))
+const OmniRoutePanel = lazy(() => import('./OmniRoutePanel'))
 
 type RightSidebarPanelContentProps = {
   effectiveTab: ActiveRightSidebarTab
@@ -42,6 +43,7 @@ export function RightSidebarPanelContent({
           />
         )}
         {effectiveTab === 'baton' && <BatonPanel />}
+        {effectiveTab === 'omniroute' && <OmniRoutePanel />}
         {/* Plugin-contributed tabs route by key prefix; the panel itself
             handles plugins that have since been uninstalled or disabled.
             Why key: switching plugin tabs must remount the sandboxed iframe —

@@ -70,6 +70,7 @@ import { SkillFreshnessNudge } from './components/skills/SkillFreshnessNudge'
 import { SkillFreshnessUpdateDialog } from './components/skills/SkillFreshnessUpdateDialog'
 import { TelemetryFirstLaunchSurface } from './components/TelemetryFirstLaunchSurface'
 import { ZoomOverlay } from './components/ZoomOverlay'
+import { OmniRouteSetupDialog } from './components/right-sidebar/OmniRouteSetupDialog'
 import { onOnboardingReopened } from './components/onboarding/show-onboarding-event'
 import { shouldShowOnboarding } from './components/onboarding/should-show-onboarding'
 import { MarkdownTemplatePicker } from './components/editor/MarkdownTemplatePicker'
@@ -2700,6 +2701,9 @@ function App(): React.JSX.Element {
             >
               <ZoomOverlay />
             </RecoverableRenderErrorBoundary>
+            {/* Why: mount at App root so the setup dialog appears on first launch
+                regardless of which sidebar tab is active or whether sidebar is open. */}
+            <OmniRouteSetupDialog />
             <Suspense fallback={null}>
               {activeModal === 'delete-worktree' ? (
                 <RecoverableRenderErrorBoundary
