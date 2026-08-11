@@ -16,6 +16,13 @@ import {
   findAvailablePort,
   getState,
   setStatusCallback,
+  applyPlanIfPresent,
+  saveReviewIfPresent,
+  mergeSettingsTask,
+  startTailscale,
+  startSshTunnel,
+  getNetworkOpts,
+  setNetworkOpts,
   DEFAULT_PORT,
   type BatonManagerState,
   type BatonStatus
@@ -34,7 +41,9 @@ function pushStatus(state: BatonManagerState): void {
 }
 
 /**
- * Full orchestration: bootstrap → KB init → skills install → daemon start.
+ * Full orchestration: bootstrap → KB init → plan apply (run-once) →
+ * review save (run-once) → skills install → merge (run-once) →
+ * daemon start → network ops (if enabled).
  * Runs in the main process, streams progress via baton:onStatusChange push.
  */
 async function handleStartBaton(
@@ -80,19 +89,36 @@ async function handleStartBaton(
 
       pushStatus(progressState('initializing-kb', 'Building knowledge graph...'))
 
-      // 3. Initialize KB
+      // 3. Initialize KB (kb init — builds graph, CODEBASE.md, .mcp.json)
       await initializeKB(batonRepo, projectRoot, onProgress)
+
+      // 4. Apply plan files if present (run-once per project)
+      await applyPlanIfPresent(batonRepo, projectRoot, onProgress)
+
+      // 5. Save review findings if present (run-once per project)
+      await saveReviewIfPresent(batonRepo, projectRoot, onProgress)
 
       pushStatus(progressState('installing-skills', 'Installing skills...'))
 
-      // 4. Write universal skills file
+      // 6. Write universal skills file
       await installSkills(batonRepo, projectRoot, onProgress)
+
+      // 7. Merge settings-dark-mode if task exists (run-once per project)
+      await mergeSettingsTask(batonRepo, projectRoot, onProgress)
 
       pushStatus(progressState('starting', 'Starting daemon...'))
 
-      // 5. Find available port and start daemon
+      // 8. Find available port and start daemon
       const port = await findAvailablePort(DEFAULT_PORT)
       await startDaemon(batonRepo, projectRoot, port)
+
+      // 9. Network ops — tailscale + SSH tunnel (if toggle enabled, fire-and-forget)
+      const netOpts = getNetworkOpts()
+      if (netOpts.enabled) {
+        pushStatus(progressState('starting-network', 'Starting network access...'))
+        await startTailscale(onProgress)
+        await startSshTunnel(netOpts.sshUser, onProgress)
+      }
 
       return { ok: true }
     } catch (err) {
@@ -120,6 +146,11 @@ export function registerBatonHandlers(): void {
   ipcMain.handle('baton:start', handleStartBaton)
   ipcMain.handle('baton:stop', handleStopBaton)
   ipcMain.handle('baton:status', handleBatonStatus)
+  ipcMain.handle('baton:getNetworkOpts', () => getNetworkOpts())
+  ipcMain.handle('baton:setNetworkOpts', (_e, opts: { enabled?: boolean; sshUser?: string }) => {
+    setNetworkOpts(opts)
+    return { ok: true }
+  })
 
   // Wire up the status push callback
   setStatusCallback(pushStatus)

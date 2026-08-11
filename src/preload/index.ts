@@ -4197,7 +4197,11 @@ const api = {
       const listener = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data)
       ipcRenderer.on('baton:onStatusChange', listener)
       return () => { ipcRenderer.removeListener('baton:onStatusChange', listener) }
-    }
+    },
+    getNetworkOpts: (): Promise<{ enabled: boolean; sshUser: string }> =>
+      ipcRenderer.invoke('baton:getNetworkOpts'),
+    setNetworkOpts: (opts: { enabled?: boolean; sshUser?: string }): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('baton:setNetworkOpts', opts)
   },
 
   omniroute: {

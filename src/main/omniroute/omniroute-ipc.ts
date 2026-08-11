@@ -41,7 +41,7 @@ async function handleStopOmniRoute(): Promise<{ ok: boolean }> {
   return { ok: true }
 }
 
-async function handleOmniRouteSetup(values: { initialPassword: string }): Promise<{ ok: boolean; error?: string }> {
+async function handleOmniRouteSetup(values: { initialPassword: string; anthropicApiKey?: string }): Promise<{ ok: boolean; error?: string }> {
   const result = await saveSetup(values)
   return result
 }
@@ -51,7 +51,7 @@ export function registerOmniRouteHandlers(): void {
   ipcMain.handle('omniroute:start', handleStartOmniRoute)
   ipcMain.handle('omniroute:status', handleOmniRouteStatus)
   ipcMain.handle('omniroute:stop', handleStopOmniRoute)
-  ipcMain.handle('omniroute:setup', (_event, values: { initialPassword: string }) => handleOmniRouteSetup(values))
+  ipcMain.handle('omniroute:setup', (_event, values: { initialPassword: string; anthropicApiKey?: string }) => handleOmniRouteSetup(values))
 
   // Wire up the status push callback
   setStatusCallback(pushStatus)

@@ -2770,24 +2770,26 @@ export type PreloadApi = {
     start: (args: { projectRoot: string }) => Promise<{ ok: boolean; error?: string }>
     stop: () => Promise<{ ok: boolean }>
     status: () => Promise<{
-      status: 'stopped' | 'bootstrapping' | 'initializing-kb' | 'installing-skills' | 'starting' | 'running' | 'error'
+      status: 'stopped' | 'bootstrapping' | 'initializing-kb' | 'installing-skills' | 'applying-plan' | 'saving-review' | 'merging' | 'starting-network' | 'starting' | 'running' | 'error'
       port: number | null
       pid: number | null
       error: string | null
       progress: string
     }>
     onStatusChange: (callback: (state: {
-      status: 'stopped' | 'bootstrapping' | 'initializing-kb' | 'installing-skills' | 'starting' | 'running' | 'error'
+      status: 'stopped' | 'bootstrapping' | 'initializing-kb' | 'installing-skills' | 'applying-plan' | 'saving-review' | 'merging' | 'starting-network' | 'starting' | 'running' | 'error'
       port: number | null
       pid: number | null
       error: string | null
       progress: string
     }) => void) => () => void
+    getNetworkOpts: () => Promise<{ enabled: boolean; sshUser: string }>
+    setNetworkOpts: (opts: { enabled?: boolean; sshUser?: string }) => Promise<{ ok: boolean }>
   }
   omniroute: {
     start: () => Promise<{ ok: boolean; error?: string }>
     stop: () => Promise<{ ok: boolean }>
-    setup: (values: { initialPassword: string }) => Promise<{ ok: boolean; error?: string }>
+    setup: (values: { initialPassword: string; anthropicApiKey?: string }) => Promise<{ ok: boolean; error?: string }>
     status: () => Promise<{
       status: 'idle' | 'setup' | 'bootstrapping' | 'starting' | 'running' | 'error'
       port: number | null

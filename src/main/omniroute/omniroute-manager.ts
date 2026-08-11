@@ -148,9 +148,9 @@ export function isSetupComplete(repoDir?: string | null): boolean {
   return false
 }
 
-/** Write INITIAL_PASSWORD to server.env and update process.env. */
+/** Write INITIAL_PASSWORD (and optional Anthropic key) to server.env + process.env. */
 export async function saveSetup(
-  values: { initialPassword: string }
+  values: { initialPassword: string; anthropicApiKey?: string }
 ): Promise<{ ok: boolean; error?: string }> {
   const password = values.initialPassword?.trim()
   if (!password) return { ok: false, error: 'Admin password is required.' }
@@ -160,6 +160,13 @@ export async function saveSetup(
     const envPath = join(resolveDataDir(), 'server.env')
     const existing = readEnvFile(envPath)
     existing.INITIAL_PASSWORD = password
+    // Optional: persist the Anthropic key in the data dir for the new user's
+    // convenience. Routing itself is activated via the dashboard
+    // (Settings → Providers), which reads the encrypted provider store.
+    if (values.anthropicApiKey?.trim()) {
+      existing.ANTHROPIC_API_KEY = values.anthropicApiKey.trim()
+      process.env.ANTHROPIC_API_KEY = existing.ANTHROPIC_API_KEY
+    }
     writeEnvFile(envPath, existing)
     // Also set in process.env so any in-session re-start picks it up
     process.env.INITIAL_PASSWORD = password
@@ -176,6 +183,12 @@ export async function saveSetup(
 export async function getOmniRouteRepo(): Promise<string | null> {
   const envRepo = process.env.OMNIROUTE_REPO
   if (envRepo && existsSync(join(envRepo, 'scripts', 'dev', 'run-next.mjs'))) return envRepo
+
+  // Packaged .exe: OmniRoute standalone bundle at resourcesPath/omniroute
+  if (app.isPackaged && process.resourcesPath) {
+    const packaged = join(process.resourcesPath, 'omniroute')
+    if (existsSync(join(packaged, 'dev', 'run-standalone.mjs'))) return packaged
+  }
 
   const orcaAppPath = app.getAppPath()
   const candidates = [
@@ -199,6 +212,12 @@ export async function bootstrapOmniRoute(
 ): Promise<void> {
   if (existsSync(join(repoDir, 'node_modules', '.package-lock.json'))) {
     onProgress('OmniRoute already installed — skipping bootstrap')
+    return
+  }
+
+  // Packaged bundles ship the full standalone — no npm install needed
+  if (app.isPackaged) {
+    onProgress('OmniRoute bundled — skipping bootstrap')
     return
   }
 
@@ -248,14 +267,20 @@ export async function startServer(
 
   killOrphanedServer(port)
 
-  const serverScript = join(repoDir, 'scripts', 'dev', 'run-next.mjs')
+  // Packaged standalone uses dev/run-standalone.mjs (production mode, auto-generates
+  // secrets). Dev uses scripts/dev/run-next.mjs dev (with hot reload).
+  const isPackaged = app.isPackaged && existsSync(join(repoDir, 'dev', 'run-standalone.mjs'))
+  const serverScript = isPackaged
+    ? join(repoDir, 'dev', 'run-standalone.mjs')
+    : join(repoDir, 'scripts', 'dev', 'run-next.mjs')
+  const args = isPackaged ? [serverScript] : [serverScript, 'dev']
   const heapMb = calibrateHeapMb()
 
   // ELECTRON_RUN_AS_NODE makes the bundled Electron binary behave as plain Node.js.
   // Without it, a packaged .exe would try to boot a second Electron app instead of
   // running the server script. This is the same pattern Orca uses for daemon-entry,
   // plugin-host, and the CLI shim.
-  const child = spawn(process.execPath, [serverScript, 'dev'], {
+  const child = spawn(process.execPath, args, {
     cwd: repoDir,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
@@ -263,7 +288,7 @@ export async function startServer(
       ELECTRON_RUN_AS_NODE: '1',
       PORT: String(port),
       DASHBOARD_PORT: String(port),
-      NODE_ENV: 'development',
+      NODE_ENV: isPackaged ? 'production' : 'development',
       NODE_OPTIONS: `--max-old-space-size=${heapMb}`
     },
     detached: false,

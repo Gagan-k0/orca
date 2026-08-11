@@ -1,4 +1,4 @@
-const { chmodSync, existsSync, readdirSync } = require('node:fs')
+const { chmodSync, cpSync, existsSync, readdirSync, statSync } = require('node:fs')
 const { execFileSync } = require('node:child_process')
 const { join, resolve } = require('node:path')
 const electronBuilderNativeRebuild = require('./scripts/electron-builder-native-rebuild.cjs')
@@ -77,6 +77,76 @@ const winSpeechNativeResource = {
   to: 'node_modules/sherpa-onnx-win-x64'
 }
 
+/**
+ * Restore OmniRoute standalone runtime pieces stripped by electron-builder's
+ * extraResources directory-copy defaults (node_modules + dot-entries like .build/).
+ *
+ * electron-builder recurses into `from` and skips any child entry named
+ * `node_modules` or starting with `.`, which drops:
+ *   - node_modules/ (production deps)
+ *   - .build/next/server/ (compiled Next server)
+ *   - .build/next/static/ (dashboard assets)
+ *   - .build/next/BUILD_ID + manifests
+ *
+ * This runs as the first afterPack step (before pruning the app's own
+ * node_modules) and copies only from the already-assembled standalone source
+ * at ../OmniRoute/.build/next/ into resources/omniroute/. A verification pass
+ * after the copy fails the build if any critical piece is missing.
+ */
+function copyOmniRouteStandaloneRuntime(resourcesDir) {
+  const omnirouteDest = join(resourcesDir, 'omniroute')
+  // Not all platforms/CI targets ship OmniRoute — skip silently when absent.
+  if (!existsSync(omnirouteDest)) return
+
+  const standaloneSrc = join(__dirname, '..', 'OmniRoute', '.build', 'next', 'standalone')
+  const distSrc = join(__dirname, '..', 'OmniRoute', '.build', 'next')
+  if (!existsSync(standaloneSrc)) return
+
+  const cpOpts = { recursive: true, force: true }
+
+  // 1. Production node_modules (~70 MB, 20 packages including native better-sqlite3)
+  const nmSrc = join(standaloneSrc, 'node_modules')
+  if (existsSync(nmSrc)) {
+    cpSync(nmSrc, join(omnirouteDest, 'node_modules'), cpOpts)
+    console.log('[afterPack] OmniRoute: restored node_modules')
+  }
+
+  // 2. Compiled Next server (~200 MB — app/, chunks/, pages/, manifests)
+  const serverSrc = join(distSrc, 'server')
+  if (existsSync(serverSrc)) {
+    cpSync(serverSrc, join(omnirouteDest, '.build', 'next', 'server'), cpOpts)
+    console.log('[afterPack] OmniRoute: restored .build/next/server')
+  }
+
+  // 3. Dashboard static assets (~19 MB — JS/CSS chunks)
+  const staticSrc = join(distSrc, 'static')
+  if (existsSync(staticSrc)) {
+    cpSync(staticSrc, join(omnirouteDest, '.build', 'next', 'static'), cpOpts)
+    console.log('[afterPack] OmniRoute: restored .build/next/static')
+  }
+
+  // 4. Top-level manifest files (BUILD_ID, package.json, required-server-files.json, etc.)
+  const skipDirs = new Set(['standalone', 'cache', 'dev', 'trace', 'trace-build', 'diagnostics', 'types'])
+  for (const entry of readdirSync(distSrc, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (skipDirs.has(entry.name) || entry.name === 'server' || entry.name === 'static') continue
+      cpSync(join(distSrc, entry.name), join(omnirouteDest, '.build', 'next', entry.name), cpOpts)
+      continue
+    }
+    cpSync(join(distSrc, entry.name), join(omnirouteDest, '.build', 'next', entry.name))
+  }
+
+  // 5. Fail fast if any critical piece is missing — a silent gap here means
+  //    OmniRoute won't boot on the end-user machine.
+  const required = ['node_modules', '.build/next/server', '.build/next/static', '.build/next/package.json']
+  for (const piece of required) {
+    if (!existsSync(join(omnirouteDest, piece))) {
+      throw new Error(`OmniRoute standalone runtime gap: ${piece} missing after post-copy`)
+    }
+  }
+  console.log('[afterPack] OmniRoute: standalone runtime verified')
+}
+
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
   appId,
@@ -87,7 +157,8 @@ module.exports = {
       ? { extraMetadata: { version: localBuildVersion } }
       : {}),
   directories: {
-    buildResources: 'resources/build'
+    buildResources: 'resources/build',
+    output: '../IDE'
   },
   files: [
     '!**/.vscode/*',
@@ -201,6 +272,9 @@ module.exports = {
     if (!existsSync(resourcesDir)) {
       throw new Error(`Missing packaged resources directory: ${resourcesDir}`)
     }
+    // First: restore OmniRoute standalone runtime pieces (node_modules + .build/)
+    // stripped by electron-builder's extraResources directory-copy defaults.
+    copyOmniRouteStandaloneRuntime(resourcesDir)
     if (context.electronPlatformName === 'darwin') {
       const architectureByEnum = { 1: 'x64', 3: 'arm64' }
       const architecture = architectureByEnum[context.arch]
@@ -279,6 +353,13 @@ module.exports = {
       publisherName: 'SignPath Foundation'
     },
     extraResources: [
+      // Why: Electron 43 requires resources/default_app.asar for early bootstrap
+      // operations (--version, certain Chromium init paths). Without it the
+      // packaged exe silently exits with code 1 before any JS runs.
+      {
+        from: 'node_modules/electron/dist/resources/default_app.asar',
+        to: 'default_app.asar'
+      },
       ...commonExtraResources,
       ...createPackagedRuntimeNodeModuleResources('win32'),
       winSpeechNativeResource,
@@ -298,7 +379,35 @@ module.exports = {
         from: 'native/computer-use-windows/runtime.ps1',
         to: 'computer-use-windows/runtime.ps1'
       },
-      featureWallResources
+      featureWallResources,
+      // Why: the Baton daemon + dashboard ship as extraResources so a packaged
+      // .exe on any machine has zero external deps. baton-manager.ts resolves
+      // this via process.resourcesPath/baton and runs dist/cli.js through
+      // ELECTRON_RUN_AS_NODE. Entries are intentionally absent on mac/linux
+      // (Baton integration is Windows-only for now).
+      {
+        from: '../Baton-Multi-Agent-/dist',
+        to: 'baton/dist'
+      },
+      {
+        from: '../Baton-Multi-Agent-/web/dist',
+        to: 'baton/web/dist'
+      },
+      {
+        // Why: staged production-only copy (dev deps pruned) so the bundle stays
+        // lean without destroying the dev repo's node_modules.
+        from: '../Baton-Multi-Agent-/.build/bundle/node_modules',
+        to: 'baton/node_modules'
+      },
+      // Why: the OmniRoute standalone bundle ships under resources/omniroute so
+      // omniroute-manager.ts can run dev/run-standalone from process.resourcesPath.
+      // node_modules and dot-entries (.build/) are stripped from directory copies
+      // by electron-builder's extraResources defaults, so those pieces are
+      // restored by the copyOmniRouteStandaloneRuntime afterPack hook below.
+      {
+        from: '../OmniRoute/.build/next/standalone',
+        to: 'omniroute'
+      }
     ]
   },
   nsis: {

@@ -1,6 +1,6 @@
 import { useActiveWorktree } from '@/store/selectors'
 import { useBatonStore } from '@/store/baton-store'
-import { Network, Play, Square, RefreshCw, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
+import { Network, Play, Square, RefreshCw, AlertCircle, CheckCircle2, Loader2, ChevronDown, ChevronUp, Shield } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
@@ -8,20 +8,30 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * States: stopped (Start button) / bootstrapping / running (iframe) / error.
  */
 export default function BatonPanel(): React.JSX.Element {
-  const { status, port, error, progress, startBaton, stopBaton, refreshStatus } = useBatonStore()
+  const { status, port, error, progress, startBaton, stopBaton, refreshStatus, networkEnabled, sshUser, setNetworkOpts, loadNetworkOpts } = useBatonStore()
   const activeWorktree = useActiveWorktree()
   const projectRoot = activeWorktree?.path ?? ''
   const [iframeKey, setIframeKey] = useState(0)
+  const [networkExpanded, setNetworkExpanded] = useState(false)
+  const [localSshUser, setLocalSshUser] = useState(sshUser)
 
-  // On mount, check current daemon status
+  // On mount, check current daemon status + load network opts
   useEffect(() => {
     void refreshStatus()
-  }, [refreshStatus])
+    void loadNetworkOpts()
+  }, [refreshStatus, loadNetworkOpts])
+
+  // Keep local SSH field in sync when store loads
+  useEffect(() => { setLocalSshUser(sshUser) }, [sshUser])
 
   const handleStart = useCallback(() => {
     if (!projectRoot) return
+    // Persist the SSH user before starting so main process picks it up
+    if (localSshUser !== sshUser) {
+      void setNetworkOpts({ sshUser: localSshUser })
+    }
     void startBaton(projectRoot)
-  }, [projectRoot, startBaton])
+  }, [projectRoot, startBaton, localSshUser, sshUser, setNetworkOpts])
 
   const handleStop = useCallback(() => {
     void stopBaton()
@@ -31,7 +41,7 @@ export default function BatonPanel(): React.JSX.Element {
     setIframeKey(k => k + 1)
   }, [])
 
-  const isBusy = status === 'bootstrapping' || status === 'initializing-kb' || status === 'installing-skills' || status === 'starting'
+  const isBusy = status === 'bootstrapping' || status === 'initializing-kb' || status === 'installing-skills' || status === 'applying-plan' || status === 'saving-review' || status === 'merging' || status === 'starting-network' || status === 'starting'
   const isRunning = status === 'running' && port != null
   const isError = status === 'error'
 
@@ -133,6 +143,46 @@ export default function BatonPanel(): React.JSX.Element {
                 <Play size={14} />
                 Start Baton
               </button>
+
+              {/* Network toggle (collapsed by default) */}
+              <div className="w-full max-w-xs">
+                <button
+                  type="button"
+                  onClick={() => setNetworkExpanded(e => !e)}
+                  className="flex w-full items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <Shield size={12} />
+                  <span>Network Access</span>
+                  <span className="ml-auto text-[10px] opacity-60">{networkEnabled ? 'ON' : 'OFF'}</span>
+                  {networkExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+
+                {networkExpanded && (
+                  <div className="mt-2 space-y-2 rounded-md border border-border p-3">
+                    <label className="flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={networkEnabled}
+                        onChange={e => void setNetworkOpts({ enabled: e.target.checked })}
+                        className="accent-primary"
+                      />
+                      Enable Tailscale + SSH tunnel
+                    </label>
+                    {networkEnabled && (
+                      <input
+                        type="text"
+                        value={localSshUser}
+                        onChange={e => setLocalSshUser(e.target.value)}
+                        placeholder="SSH username (you)"
+                        className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs placeholder:text-muted-foreground"
+                      />
+                    )}
+                    <p className="text-[10px] text-muted-foreground">
+                      Runs <code>tailscale up</code> then opens an SSH tunnel to 192.168.1.7:7077 for teammate access.
+                    </p>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>

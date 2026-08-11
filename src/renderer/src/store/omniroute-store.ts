@@ -14,7 +14,7 @@ interface OmniRouteState {
   progress: string
   startOmniRoute: () => Promise<void>
   stopOmniRoute: () => Promise<void>
-  submitSetup: (values: { initialPassword: string }) => Promise<{ ok: boolean; error?: string }>
+  submitSetup: (values: { initialPassword: string; anthropicApiKey?: string }) => Promise<{ ok: boolean; error?: string }>
   refreshStatus: () => Promise<void>
 }
 
@@ -72,7 +72,7 @@ export const useOmniRouteStore = create<OmniRouteState>()((set) => {
       } catch { /* ignore */ }
     },
 
-    submitSetup: async (values: { initialPassword: string }) => {
+    submitSetup: async (values: { initialPassword: string; anthropicApiKey?: string }) => {
       try {
         const result = await window.api.omniroute.setup(values)
         if (!result.ok) {

@@ -9,6 +9,10 @@ export type BatonStatus =
   | 'bootstrapping'
   | 'initializing-kb'
   | 'installing-skills'
+  | 'applying-plan'
+  | 'saving-review'
+  | 'merging'
+  | 'starting-network'
   | 'starting'
   | 'running'
   | 'error'
@@ -19,9 +23,13 @@ interface BatonState {
   pid: number | null
   error: string | null
   progress: string
+  networkEnabled: boolean
+  sshUser: string
   startBaton: (projectRoot: string) => Promise<void>
   stopBaton: () => Promise<void>
   refreshStatus: () => Promise<void>
+  setNetworkOpts: (opts: { enabled?: boolean; sshUser?: string }) => Promise<void>
+  loadNetworkOpts: () => Promise<void>
 }
 
 let listenerInstalled = false
@@ -57,6 +65,8 @@ export const useBatonStore = create<BatonState>()((set) => {
     pid: null,
     error: null,
     progress: '',
+    networkEnabled: false,
+    sshUser: '',
 
     startBaton: async (projectRoot: string) => {
       set({ status: 'bootstrapping', error: null, progress: 'Starting...' })
@@ -88,6 +98,24 @@ export const useBatonStore = create<BatonState>()((set) => {
           error: state.error,
           progress: state.progress
         })
+      } catch { /* ignore */ }
+    },
+
+    setNetworkOpts: async (opts) => {
+      try {
+        await window.api.baton.setNetworkOpts(opts)
+        const current = useBatonStore.getState()
+        set({
+          networkEnabled: opts.enabled ?? current.networkEnabled,
+          sshUser: opts.sshUser ?? current.sshUser
+        })
+      } catch { /* ignore */ }
+    },
+
+    loadNetworkOpts: async () => {
+      try {
+        const opts = await window.api.baton.getNetworkOpts()
+        set({ networkEnabled: opts.enabled, sshUser: opts.sshUser })
       } catch { /* ignore */ }
     }
   }

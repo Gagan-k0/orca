@@ -1,7 +1,7 @@
 /**
  * First-run setup dialog for OmniRoute.
  * Collects the INITIAL_PASSWORD (admin dashboard password) and optionally
- * other configuration keys before the server starts.
+ * an Anthropic API key (saved to the data dir; routing activated via dashboard).
  */
 import { useState, useCallback, type FormEvent } from 'react'
 import { Route, Eye, EyeOff, ArrowRight } from 'lucide-react'
@@ -21,6 +21,7 @@ export function OmniRouteSetupDialog(): React.JSX.Element {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [showPw, setShowPw] = useState(false)
+  const [anthropicKey, setAnthropicKey] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -33,13 +34,17 @@ export function OmniRouteSetupDialog(): React.JSX.Element {
     if (password === 'CHANGEME') { setError('Choose a password other than CHANGEME.'); return }
     setSubmitting(true)
     setError(null)
-    const result = await submitSetup({ initialPassword: password.trim() })
+    const values: { initialPassword: string; anthropicApiKey?: string } = {
+      initialPassword: password.trim()
+    }
+    if (anthropicKey.trim()) values.anthropicApiKey = anthropicKey.trim()
+    const result = await submitSetup(values)
     if (!result.ok) {
       setError(result.error ?? 'Setup failed')
       setSubmitting(false)
     }
     // On success, status changes → dialog closes automatically
-  }, [password, confirm, submitSetup])
+  }, [password, confirm, anthropicKey, submitSetup])
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) setError(null) }}>
@@ -50,8 +55,9 @@ export function OmniRouteSetupDialog(): React.JSX.Element {
             OmniRoute Initial Setup
           </DialogTitle>
           <DialogDescription>
-            Set the admin password for the OmniRoute dashboard. This is used to log in
-            to the dashboard at <code>http://127.0.0.1:20128</code>.
+            Set the admin password for the OmniRoute dashboard. After setup, add your
+            Anthropic API key in <strong>Settings → Providers</strong> inside the
+            dashboard to activate Claude routing in the terminal.
           </DialogDescription>
         </DialogHeader>
 
@@ -93,6 +99,24 @@ export function OmniRouteSetupDialog(): React.JSX.Element {
               placeholder="Re-enter the password"
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
             />
+          </div>
+
+          {/* Anthropic API Key (optional) */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">
+              Anthropic API Key <span className="opacity-60">(optional)</span>
+            </label>
+            <input
+              type="password"
+              value={anthropicKey}
+              onChange={(e) => setAnthropicKey(e.target.value)}
+              placeholder="sk-ant-..."
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+            />
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Saved to OmniRoute's data folder. You can also add or change this later
+              in the dashboard at <code>Settings → Providers</code>.
+            </p>
           </div>
 
           {error && (

@@ -7,7 +7,7 @@
  */
 import { execSync, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { appendFile, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 
@@ -20,9 +20,69 @@ export type BatonStatus =
   | 'bootstrapping'
   | 'initializing-kb'
   | 'installing-skills'
+  | 'applying-plan'
+  | 'saving-review'
+  | 'merging'
+  | 'starting-network'
   | 'starting'
   | 'running'
   | 'error'
+
+/* ------------------------------------------------------------------ */
+/* Startup marker — tracks one-shot steps per project                  */
+/* ------------------------------------------------------------------ */
+
+interface StartupMarker {
+  version: number
+  planAppliedAt: string | null
+  reviewSavedAt: string | null
+  mergedAt: string | null
+}
+
+const STARTER_MARKER: StartupMarker = { version: 1, planAppliedAt: null, reviewSavedAt: null, mergedAt: null }
+
+function markerPath(projectRoot: string): string {
+  return join(projectRoot, '.baton', 'orca-startup.json')
+}
+
+async function loadStartupMarker(projectRoot: string): Promise<StartupMarker> {
+  try {
+    const raw = await readFile(markerPath(projectRoot), 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (parsed && parsed.version === 1) return { ...STARTER_MARKER, ...parsed }
+  } catch { /* first run or corrupt — start fresh */ }
+  return { ...STARTER_MARKER }
+}
+
+async function saveStartupMarker(projectRoot: string, patch: Partial<StartupMarker>): Promise<void> {
+  const marker = await loadStartupMarker(projectRoot)
+  const updated = { ...marker, ...patch }
+  const path = markerPath(projectRoot)
+  try {
+    const dir = join(projectRoot, '.baton')
+    await mkdir(dir, { recursive: true })
+    await writeFile(path, JSON.stringify(updated, null, 2) + '\n', 'utf-8')
+  } catch { /* non-critical — marker save failure doesn't block setup */ }
+}
+
+/* ------------------------------------------------------------------ */
+/* Network opts — in-memory toggle (off by default, no persistence)    */
+/* ------------------------------------------------------------------ */
+
+interface NetworkOpts {
+  enabled: boolean
+  sshUser: string
+}
+
+let networkOpts: NetworkOpts = { enabled: false, sshUser: '' }
+
+export function getNetworkOpts(): NetworkOpts {
+  return { ...networkOpts }
+}
+
+export function setNetworkOpts(opts: Partial<NetworkOpts>): void {
+  networkOpts = { ...networkOpts, ...opts }
+}
 
 export interface BatonManagerState {
   status: BatonStatus
@@ -95,6 +155,12 @@ export async function getBatonRepo(): Promise<string | null> {
   const envRepo = process.env.BATON_REPO
   if (envRepo && existsSync(join(envRepo, 'dist', 'cli.js'))) return envRepo
 
+  // Packaged .exe: Baton bundled as extraResources at resourcesPath/baton
+  if (app.isPackaged && process.resourcesPath) {
+    const packaged = join(process.resourcesPath, 'baton')
+    if (existsSync(join(packaged, 'dist', 'cli.js'))) return packaged
+  }
+
   // Why app.getAppPath() (not a __dirname walk): the main-process bundle is
   // chunked under out/main/chunks, so walking up from __dirname lands in the
   // wrong directory in dev and picks a stale sibling Baton clone. getAppPath()
@@ -124,6 +190,12 @@ export async function bootstrapBaton(
   const cliPath = join(batonRepo, 'dist', 'cli.js')
   if (existsSync(cliPath)) {
     onProgress('Baton already built — skipping bootstrap')
+    return
+  }
+
+  // Packaged bundles ship pre-built dist/ — no npm/build needed
+  if (app.isPackaged) {
+    onProgress('Baton bundled — skipping bootstrap')
     return
   }
 
@@ -161,13 +233,18 @@ export async function initializeKB(
   projectRoot: string,
   onProgress: (line: string) => void
 ): Promise<void> {
+  // Packaged bundles skip KB init for fast startup — the daemon builds it on-demand
+  if (app.isPackaged) {
+    onProgress('Baton bundled — skipping KB init')
+    return
+  }
+
   notifyStatus({ status: 'initializing-kb', port: null, pid: null, batonRepo, error: null, progress: 'Building knowledge graph...' })
   onProgress('Initializing knowledge base...')
 
   const cliPath = join(batonRepo, 'dist', 'cli.js')
-  // --yes: accept defaults, --local: no share prompt, --no-mcp: skip MCP config, --no-docs: skip AGENTS.md
-  // process.execPath + ELECTRON_RUN_AS_NODE so the CLI runs under the bundled Electron binary (no node on PATH in packaged mode)
-  await runCommand(process.execPath, [cliPath, 'setup', projectRoot, '--yes', '--local', '--no-mcp', '--no-docs'], projectRoot, onProgress, { ELECTRON_RUN_AS_NODE: '1' })
+  // kb init --local: share=false (no git commit), mcp=true, docs=true (agents learn Baton protocols)
+  await runCommand(process.execPath, [cliPath, 'kb', 'init', projectRoot, '--local'], projectRoot, onProgress, { ELECTRON_RUN_AS_NODE: '1' })
 
   onProgress('Knowledge base initialized')
 }
@@ -463,4 +540,188 @@ function runCommandCollect(
     })
     child.on('error', reject)
   })
+}
+
+/* ------------------------------------------------------------------ */
+/* One-shot steps: plan apply / review save / merge (run once)         */
+/* ------------------------------------------------------------------ */
+
+export async function applyPlanIfPresent(
+  batonRepo: string,
+  projectRoot: string,
+  onProgress: (line: string) => void
+): Promise<void> {
+  if (app.isPackaged) return // skip in packaged mode
+  const marker = await loadStartupMarker(projectRoot)
+  if (marker.planAppliedAt) { onProgress('Plan already applied — skipping'); return }
+
+  notifyStatus({ status: 'applying-plan', port: null, pid: null, batonRepo, error: null, progress: 'Checking for plan files...' })
+
+  const plansDir = join(projectRoot, 'baton', 'plans')
+  const cliPath = join(batonRepo, 'dist', 'cli.js')
+
+  try {
+    // list plan files (.md only, skip README.md)
+    const entries = await import('node:fs/promises').then(fs => fs.readdir(plansDir).catch(() => [] as string[]))
+    const plans = entries.filter(f => f.endsWith('.md') && !f.toLowerCase().includes('readme'))
+
+    if (plans.length === 0) { onProgress('No plan files found — skipping plan apply'); return }
+
+    for (const plan of plans) {
+      onProgress(`Applying plan: ${plan}`)
+      await runCommand(process.execPath, [cliPath, 'plan', 'apply', join(plansDir, plan)], projectRoot, onProgress, { ELECTRON_RUN_AS_NODE: '1' })
+    }
+    await saveStartupMarker(projectRoot, { planAppliedAt: new Date().toISOString() })
+    onProgress(`${plans.length} plan(s) applied`)
+  } catch {
+    onProgress('Plan apply failed or unavailable — continuing')
+  }
+}
+
+export async function saveReviewIfPresent(
+  batonRepo: string,
+  projectRoot: string,
+  onProgress: (line: string) => void
+): Promise<void> {
+  if (app.isPackaged) return
+  const marker = await loadStartupMarker(projectRoot)
+  if (marker.reviewSavedAt) { onProgress('Review already saved — skipping'); return }
+
+  notifyStatus({ status: 'saving-review', port: null, pid: null, batonRepo, error: null, progress: 'Checking for review findings...' })
+
+  const reviewsDir = join(projectRoot, 'baton', 'reviews')
+  const cliPath = join(batonRepo, 'dist', 'cli.js')
+
+  try {
+    const entries = await import('node:fs/promises').then(fs => fs.readdir(reviewsDir).catch(() => [] as string[]))
+    const findings = entries.filter(f => f.endsWith('.json'))
+
+    if (findings.length === 0) { onProgress('No review findings — skipping review save'); return }
+
+    for (const file of findings) {
+      const slug = file.replace('.json', '')
+      const filePath = join(reviewsDir, file)
+      onProgress(`Saving review: ${slug}`)
+      // runCommand pipes findings JSON via stdin: baton review save <slug> < <file>
+      await runCommandWithStdin(cliPath, ['review', 'save', slug], filePath, projectRoot, onProgress, { ELECTRON_RUN_AS_NODE: '1' })
+    }
+    await saveStartupMarker(projectRoot, { reviewSavedAt: new Date().toISOString() })
+    onProgress(`${findings.length} review(s) saved`)
+  } catch {
+    onProgress('Review save failed or unavailable — continuing')
+  }
+}
+
+/** Like runCommand but pipes a file into the child's stdin. */
+async function runCommandWithStdin(
+  cmd: string,
+  args: string[],
+  stdinFile: string,
+  cwd: string,
+  onProgress: (line: string) => void,
+  env?: Record<string, string>
+): Promise<void> {
+  const input = await readFile(stdinFile, 'utf-8').catch(() => '')
+  if (!input) { onProgress(`No input for ${stdinFile} — skipping`); return }
+
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, FORCE_COLOR: '0', ...env }
+    })
+
+    child.stdout?.on('data', (data: Buffer) => {
+      const line = data.toString().trim()
+      if (line) onProgress(line)
+    })
+    child.stderr?.on('data', (data: Buffer) => {
+      const line = data.toString().trim()
+      if (line) onProgress(line)
+    })
+
+    child.on('exit', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`${cmd} exited with code ${code}`))
+    })
+    child.on('error', reject)
+
+    child.stdin?.write(input)
+    child.stdin?.end()
+  })
+}
+
+export async function mergeSettingsTask(
+  batonRepo: string,
+  projectRoot: string,
+  onProgress: (line: string) => void
+): Promise<void> {
+  if (app.isPackaged) return
+  const marker = await loadStartupMarker(projectRoot)
+  if (marker.mergedAt) { onProgress('Already merged — skipping'); return }
+
+  notifyStatus({ status: 'merging', port: null, pid: null, batonRepo, error: null, progress: 'Checking merge: settings-dark-mode...' })
+
+  const cliPath = join(batonRepo, 'dist', 'cli.js')
+  const SLUG = 'settings-dark-mode'
+
+  try {
+    // Check if the task exists by reading the task list
+    const listOut = await runCommandCollect(process.execPath, [cliPath, 'ls', '--json'], projectRoot, { ELECTRON_RUN_AS_NODE: '1' })
+    const tasks = JSON.parse(listOut || '[]')
+    const exists = Array.isArray(tasks) && tasks.some((t: { slug?: string }) => t.slug === SLUG)
+
+    if (!exists) {
+      onProgress(`No '${SLUG}' task found — skipping merge`)
+      return
+    }
+
+    onProgress(`Merging task: ${SLUG}`)
+    await runCommand(process.execPath, [cliPath, 'merge', SLUG], projectRoot, onProgress, { ELECTRON_RUN_AS_NODE: '1' })
+    await saveStartupMarker(projectRoot, { mergedAt: new Date().toISOString() })
+    onProgress(`Merged: ${SLUG}`)
+  } catch {
+    onProgress('Merge skipped (task not found or merge failed) — continuing')
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Network ops: tailscale + SSH tunnel (fire-and-forget)               */
+/* ------------------------------------------------------------------ */
+
+export async function startTailscale(
+  onProgress: (line: string) => void
+): Promise<void> {
+  notifyStatus({ status: 'starting-network', port: null, pid: null, batonRepo: null, error: null, progress: 'Starting Tailscale...' })
+
+  try {
+    await runCommand('tailscale', ['up'], process.cwd(), onProgress)
+    onProgress('Tailscale connected')
+  } catch {
+    onProgress('Tailscale start failed or not installed — continuing')
+  }
+}
+
+export async function startSshTunnel(
+  user: string,
+  onProgress: (line: string) => void
+): Promise<void> {
+  notifyStatus({ status: 'starting-network', port: null, pid: null, batonRepo: null, error: null, progress: `Starting SSH tunnel to ${user}@192.168.1.7...` })
+
+  if (!user) {
+    onProgress('No SSH username configured — skipping tunnel')
+    return
+  }
+
+  try {
+    // Fire-and-forget: ssh -N hangs forever (it's a tunnel, no shell)
+    spawn('ssh', ['-N', '-L', '7077:localhost:7077', `${user}@192.168.1.7`], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+      env: { ...process.env }
+    })
+    onProgress(`SSH tunnel started → ${user}@192.168.1.7:7077`)
+  } catch {
+    onProgress('SSH tunnel failed — continuing')
+  }
 }

@@ -67,6 +67,7 @@ import {
 } from '../../shared/pi-agent-kind'
 import { isPwshAvailableAsync } from '../pwsh'
 import { LocalPtyProvider } from '../providers/local-pty-provider'
+import { getState as getOmniRouteState } from '../omniroute/omniroute-manager'
 import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
 import { isPtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import {
@@ -1840,6 +1841,17 @@ export function buildPtyHostEnv(
       isWsl: opts.isWsl
     })
   })
+
+  // Auto-inject OmniRoute proxy env so `claude` in terminal routes through the bundled OmniRoute.
+  // Only in packaged mode — in dev the user manages OmniRoute separately.
+  if (opts.isPackaged) {
+    const omniState = getOmniRouteState()
+    if (omniState.status === 'running' && omniState.port) {
+      if (!baseEnv.ANTHROPIC_BASE_URL) baseEnv.ANTHROPIC_BASE_URL = `http://127.0.0.1:${omniState.port}`
+      if (!baseEnv.ANTHROPIC_AUTH_TOKEN) baseEnv.ANTHROPIC_AUTH_TOKEN = 'orca-bundled-proxy'
+      if (!baseEnv.ANTHROPIC_MODEL) baseEnv.ANTHROPIC_MODEL = 'auto'
+    }
+  }
 
   return baseEnv
 }
