@@ -52,6 +52,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { isRemoteWorkspaceSnapshotApplyInProgress, useIpcEvents } from './hooks/useIpcEvents'
 import { useAutomationDispatchEvents } from './hooks/useAutomationDispatchEvents'
 import RetainedAgentsSyncGate from './components/dashboard/RetainedAgentsSyncGate'
+import BatonAutoStart from './components/BatonAutoStart'
 import { AgentHibernationGate } from './components/AgentHibernationGate'
 import { AiVaultTabTitleSyncGate } from './components/AiVaultTabTitleSyncGate'
 import { ActivityTitlebarControls } from './components/activity/ActivityTitlebarControls'
@@ -2261,6 +2262,8 @@ function App(): React.JSX.Element {
             <MacosTccPromptNoticeHost />
             {/* Why: leaf-mounted retention sync keeps agent-status subscriptions out of the App render tree. */}
             <RetainedAgentsSyncGate />
+            {/* Auto-start Baton daemon on first project open — fire-and-forget. */}
+            <BatonAutoStart />
             <AiVaultTabTitleSyncGate />
             {settings?.experimentalAgentDashboardPopout === true ? (
               <Suspense fallback={null}>

@@ -166,7 +166,8 @@ export async function initializeKB(
 
   const cliPath = join(batonRepo, 'dist', 'cli.js')
   // --yes: accept defaults, --local: no share prompt, --no-mcp: skip MCP config, --no-docs: skip AGENTS.md
-  await runCommand('node', [cliPath, 'setup', projectRoot, '--yes', '--local', '--no-mcp', '--no-docs'], projectRoot, onProgress)
+  // process.execPath + ELECTRON_RUN_AS_NODE so the CLI runs under the bundled Electron binary (no node on PATH in packaged mode)
+  await runCommand(process.execPath, [cliPath, 'setup', projectRoot, '--yes', '--local', '--no-mcp', '--no-docs'], projectRoot, onProgress, { ELECTRON_RUN_AS_NODE: '1' })
 
   onProgress('Knowledge base initialized')
 }
@@ -186,7 +187,7 @@ export async function installSkills(
   const cliPath = join(batonRepo, 'dist', 'cli.js')
 
   // Enumerate bundled skill ids from the catalog (there is no bulk install).
-  const listOutput = await runCommandCollect('node', [cliPath, 'skills', 'list'], projectRoot)
+  const listOutput = await runCommandCollect(process.execPath, [cliPath, 'skills', 'list'], projectRoot, { ELECTRON_RUN_AS_NODE: '1' })
   const skillIds = [
     ...new Set(Array.from(listOutput.matchAll(/\[bundled\]\s+([A-Za-z0-9._-]+)/g), (m) => m[1]))
   ]
@@ -284,11 +285,13 @@ export async function startDaemon(
 
   notifyStatus({ status: 'starting', port, pid: null, batonRepo, error: null, progress: 'Starting Baton daemon...' })
 
+  // ELECTRON_RUN_AS_NODE makes the bundled Electron binary behave as plain Node.js.
+  // Without it, a packaged .exe cannot find 'node' on PATH and the daemon fails to start.
   const cliPath = join(batonRepo, 'dist', 'cli.js')
-  const child = spawn('node', [cliPath, 'serve', '--write', '--port', String(port)], {
+  const child = spawn(process.execPath, [cliPath, 'serve', '--write', '--port', String(port)], {
     cwd: projectRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, NODE_ENV: 'production' },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_ENV: 'production' },
     detached: false
   })
 
@@ -408,13 +411,14 @@ function runCommand(
   cmd: string,
   args: string[],
   cwd: string,
-  onProgress: (line: string) => void
+  onProgress: (line: string) => void,
+  env?: Record<string, string>
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' }
+      env: { ...process.env, FORCE_COLOR: '0', ...env }
     })
 
     child.stdout?.on('data', (data: Buffer) => {
@@ -438,13 +442,14 @@ function runCommand(
 function runCommandCollect(
   cmd: string,
   args: string[],
-  cwd: string
+  cwd: string,
+  env?: Record<string, string>
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' }
+      env: { ...process.env, FORCE_COLOR: '0', ...env }
     })
 
     let out = ''

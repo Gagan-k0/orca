@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogFooter
 } from '@/components/ui/dialog'
-import { useOmniRouteStore, type OmniRouteStatus } from '@/store/omniroute-store'
+import { useOmniRouteStore } from '@/store/omniroute-store'
 
 export function OmniRouteSetupDialog(): React.JSX.Element {
   const status = useOmniRouteStore((s) => s.status)

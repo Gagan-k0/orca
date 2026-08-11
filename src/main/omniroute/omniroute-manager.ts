@@ -251,11 +251,16 @@ export async function startServer(
   const serverScript = join(repoDir, 'scripts', 'dev', 'run-next.mjs')
   const heapMb = calibrateHeapMb()
 
+  // ELECTRON_RUN_AS_NODE makes the bundled Electron binary behave as plain Node.js.
+  // Without it, a packaged .exe would try to boot a second Electron app instead of
+  // running the server script. This is the same pattern Orca uses for daemon-entry,
+  // plugin-host, and the CLI shim.
   const child = spawn(process.execPath, [serverScript, 'dev'], {
     cwd: repoDir,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
       PORT: String(port),
       DASHBOARD_PORT: String(port),
       NODE_ENV: 'development',
