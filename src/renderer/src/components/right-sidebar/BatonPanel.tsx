@@ -21,6 +21,13 @@ export default function BatonPanel(): React.JSX.Element {
     void loadNetworkOpts()
   }, [refreshStatus, loadNetworkOpts])
 
+  // Auto-start Baton when IDE opens with a project loaded
+  useEffect(() => {
+    if (projectRoot && status === 'stopped') {
+      void startBaton(projectRoot)
+    }
+  }, [projectRoot, status, startBaton])
+
   // Keep local SSH field in sync when store loads
   useEffect(() => { setLocalSshUser(sshUser) }, [sshUser])
 
